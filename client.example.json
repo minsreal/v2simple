@@ -1,5 +1,6 @@
 {
-  "local": "socks5://127.0.0.1:1081",
+  "local": "socks5://127.0.0.1:1084",
   "route": "whitelist",
-  "remote": "vmesss://a684455c-b14f-11ea-bf0d-42010aaa0003@<fix-me>:443?alterID=4"
+  "remote": "vmess://a684455c-b14f-11ea-bf0d-42010aaa0003@127.0.0.1:8443?alterID=1024",
+  "outFilePath": "I:\\dist\\ideaIU-2024.1.2.exe"
 }

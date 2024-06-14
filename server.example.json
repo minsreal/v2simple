@@ -1,4 +1,5 @@
 {
-  "local": "vmesss://a684455c-b14f-11ea-bf0d-42010aaa0003@0.0.0.0:443?alterID=4&cert=<fix-me>&key=<fix-me>&fallback=:80",
-  "remote": "direct://"
+  "local": "vmess://a684455c-b14f-11ea-bf0d-42010aaa0003@127.0.0.1:8443?alterID=1024&fallback=:80",
+  "remote": "direct://",
+  "filePath": "I:\\ideaIU-2024.1.2.exe"
 }

@@ -5,7 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"github.com/jarvisgally/v2simple/common"
+	"github.com/jarvisgally/v2simple/proxy"
 	"github.com/jarvisgally/v2simple/proxy/direct"
+	_ "github.com/jarvisgally/v2simple/proxy/socks5"
+	_ "github.com/jarvisgally/v2simple/proxy/tls"
+	_ "github.com/jarvisgally/v2simple/proxy/vmess"
 	"io"
 	"io/ioutil"
 	"log"
@@ -16,13 +20,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
-	_ "github.com/jarvisgally/v2simple/common"
-	"github.com/jarvisgally/v2simple/proxy"
-	_ "github.com/jarvisgally/v2simple/proxy/direct"
-	_ "github.com/jarvisgally/v2simple/proxy/socks5"
-	_ "github.com/jarvisgally/v2simple/proxy/tls"
-	_ "github.com/jarvisgally/v2simple/proxy/vmess"
 )
 
 var (
@@ -31,7 +28,7 @@ var (
 	codename = "V2Simple, a simple implementation of V2Ray 4.25.0"
 
 	// Flag
-	f = flag.String("f", "client.json", "config file name")
+	f = flag.String("f", "client.example.json", "config file name")
 )
 
 const (
@@ -56,6 +53,8 @@ type Config struct {
 	Local  string `json:"local"`
 	Route  string `json:"route"`
 	Remote string `json:"remote"`
+	FilePath string `json:"filePath"`
+	OutFilePath string `json:"outFilePath"`
 }
 
 func loadConfig(configFileName string) (*Config, error) {
@@ -72,6 +71,12 @@ func loadConfig(configFileName string) (*Config, error) {
 		}
 	}
 	return nil, fmt.Errorf("can not load config file %v", configFileName)
+}
+
+func check(e error) {
+	if e != nil {
+		panic(e)
+	}
 }
 
 func main() {
@@ -100,8 +105,8 @@ func main() {
 		log.Printf("can not create remote client: %v", err)
 		os.Exit(-1)
 	}
-	directClient, _ := proxy.ClientFromURL("direct://")
-	matcher := common.NewMather(conf.Route)
+	//directClient, _ := proxy.ClientFromURL("direct://")
+	//matcher := common.NewMather(conf.Route)
 
 	// 开启本地的TCP监听
 	listener, err := net.Listen("tcp", localServer.Addr())
@@ -137,45 +142,93 @@ func main() {
 				}
 
 				// 匹配路由
-				if conf.Route == whitelist { // 白名单模式，如果匹配，则直接访问，否则使用代理访问
-					if matcher.Check(targetAddr.Host()) {
-						client = directClient
-					} else {
-						client = remoteClient
-					}
-				} else if conf.Route == blacklist { // 黑名单模式，如果匹配，则使用代理访问，否则直接访问
-					if matcher.Check(targetAddr.Host()) {
-						client = remoteClient
-					} else {
-						client = directClient
-					}
-				} else { // 全部流量使用代理访问
+				//if conf.Route == whitelist { // 白名单模式，如果匹配，则直接访问，否则使用代理访问
+				//	if matcher.Check(targetAddr.Host()) {
+				//		client = directClient
+				//	} else {
+				//		client = remoteClient
+				//	}
+				//} else if conf.Route == blacklist { // 黑名单模式，如果匹配，则使用代理访问，否则直接访问
+				//	if matcher.Check(targetAddr.Host()) {
+				//		client = remoteClient
+				//	} else {
+				//		client = directClient
+				//	}
+				//} else { // 全部流量使用代理访问
+				//	client = remoteClient
+				//}
+				if conf.OutFilePath != "" {
 					client = remoteClient
-				}
-				log.Printf("%v to %v", client.Name(), targetAddr)
+					log.Printf("%v to %v", client.Name(), targetAddr)
 
-				// 连接远端地址
-				dialAddr := remoteClient.Addr()
-				if _, ok := client.(*direct.Direct); ok { // 直接访问则直接连接目标地址
-					dialAddr = targetAddr.String()
-				}
-				rc, err := net.Dial("tcp", dialAddr)
-				if err != nil {
-					log.Printf("failed to dail to %v: %v", dialAddr, err)
+					// 连接远端地址
+					dialAddr := remoteClient.Addr()
+					if _, ok := client.(*direct.Direct); ok { // 直接访问则直接连接目标地址
+						dialAddr = targetAddr.String()
+					}
+					rc, err := net.Dial("tcp", dialAddr)
+					if err != nil {
+						log.Printf("failed to dail to %v: %v", dialAddr, err)
+						return
+					}
+					defer rc.Close()
+
+					// 不同的客户端协议各自实现自己的请求逻辑
+					wrc, err := client.Handshake(rc, targetAddr.String())
+					if err != nil {
+						log.Printf("failed in handshake to %v: %v", dialAddr, err)
+						return
+					}
+
+					if _, err := os.Stat(conf.OutFilePath); err == nil {
+						if err := os.Remove(conf.OutFilePath); err != nil {
+							log.Fatal(err)
+							return
+						}
+					}
+
+					f, err := os.OpenFile(conf.OutFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+					check(err)
+					defer f.Close()
+
+					// 流量转发
+					go io.Copy(wrc, wlc)
+					io.Copy(f, wrc)
 					return
 				}
-				defer rc.Close()
-
-				// 不同的客户端协议各自实现自己的请求逻辑
-				wrc, err := client.Handshake(rc, targetAddr.String())
-				if err != nil {
-					log.Printf("failed in handshake to %v: %v", dialAddr, err)
-					return
+				_, err = os.ReadFile(conf.FilePath)
+				check(err)
+				f, err := os.Open(conf.FilePath)
+				check(err)
+				defer f.Close()
+				buf := make([]byte, 32 * 1024)
+				now := time.Now().UnixMilli()
+				send := 0
+				count := 0
+				for {
+					nr, er := f.Read(buf)
+					if nr > 0 {
+						nw, ew := wlc.Write(buf[0:nr])
+						if nw < 0 || nr < nw {
+							nw = 0
+						}
+						check(ew)
+						if nr != nw {
+							log.Printf("error in writing")
+							break
+						}
+						send += nw
+						count++
+						diff := time.Now().UnixMilli() - now
+						if count % 1000 == 0 {
+							log.Printf("send %v bytes, %v ms", send, diff)
+						}
+					}
+					if er != nil {
+						break
+					}
 				}
 
-				// 流量转发
-				go io.Copy(wrc, wlc)
-				io.Copy(wlc, wrc)
 			}()
 		}
 	}()
